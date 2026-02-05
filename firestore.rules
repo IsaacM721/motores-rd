@@ -1,0 +1,134 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Helper functions
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    function getUserData() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
+    }
+
+    function isAdmin() {
+      return isAuthenticated() && getUserData().role == 'admin';
+    }
+
+    function isDealer() {
+      return isAuthenticated() && getUserData().role == 'dealer';
+    }
+
+    function isDealerOrAdmin() {
+      return isAuthenticated() && (getUserData().role == 'dealer' || getUserData().role == 'admin');
+    }
+
+    // Users collection
+    match /users/{userId} {
+      // Users can read their own profile
+      allow read: if isOwner(userId) || isAdmin();
+
+      // Users can create their own profile during signup
+      allow create: if isOwner(userId);
+
+      // Users can update their own profile (except role)
+      allow update: if isOwner(userId) && !request.resource.data.diff(resource.data).affectedKeys().hasAny(['role'])
+                    || isAdmin();
+
+      // Only admins can delete users
+      allow delete: if isAdmin();
+    }
+
+    // Brands collection (reference data)
+    match /brands/{brandId} {
+      // Anyone can read brands
+      allow read: if true;
+
+      // Only admins can write
+      allow write: if isAdmin();
+    }
+
+    // Makes collection (reference data)
+    match /makes/{makeId} {
+      // Anyone can read makes
+      allow read: if true;
+
+      // Only admins can write
+      allow write: if isAdmin();
+    }
+
+    // Motorcycles collection
+    match /motorcycles/{motorcycleId} {
+      // Anyone can read available motorcycles
+      allow read: if resource.data.available == true
+                  || isOwner(resource.data.ownerId)
+                  || isAdmin();
+
+      // Dealers can create motorcycles (they become the owner)
+      allow create: if isDealerOrAdmin()
+                    && request.resource.data.ownerId == request.auth.uid;
+
+      // Owners or admins can update
+      allow update: if isOwner(resource.data.ownerId) || isAdmin();
+
+      // Owners or admins can delete
+      allow delete: if isOwner(resource.data.ownerId) || isAdmin();
+    }
+
+    // Bookings collection
+    match /bookings/{bookingId} {
+      // Users can read their own bookings
+      // Owners can read bookings for their motorcycles
+      allow read: if isOwner(resource.data.userId)
+                  || isOwner(resource.data.ownerId)
+                  || isAdmin();
+
+      // Authenticated users can create bookings
+      allow create: if isAuthenticated()
+                    && request.resource.data.userId == request.auth.uid;
+
+      // Owners can update booking status (confirm, reject)
+      // Users can cancel their own bookings
+      allow update: if (isOwner(resource.data.ownerId) &&
+                        request.resource.data.diff(resource.data).affectedKeys()
+                          .hasOnly(['status', 'confirmedAt', 'cancelledAt', 'cancellationReason', 'updatedAt']))
+                    || (isOwner(resource.data.userId) &&
+                        request.resource.data.status == 'cancelled' &&
+                        resource.data.status == 'pending')
+                    || isAdmin();
+
+      // Only admins can delete bookings
+      allow delete: if isAdmin();
+    }
+
+    // Availability collection
+    match /availability/{availabilityId} {
+      // Anyone can read availability
+      allow read: if true;
+
+      // Motorcycle owners or admins can manage availability
+      allow write: if isDealerOrAdmin();
+    }
+
+    // Reviews collection (future feature)
+    match /reviews/{reviewId} {
+      // Anyone can read reviews
+      allow read: if true;
+
+      // Users can create reviews for completed bookings
+      allow create: if isAuthenticated()
+                    && request.resource.data.userId == request.auth.uid;
+
+      // Users can update their own reviews
+      allow update: if isOwner(resource.data.userId);
+
+      // Users can delete their own reviews, admins can delete any
+      allow delete: if isOwner(resource.data.userId) || isAdmin();
+    }
+  }
+}

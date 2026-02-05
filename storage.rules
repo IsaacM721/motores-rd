@@ -1,0 +1,44 @@
+rules_version = '2';
+
+service firebase.storage {
+  match /b/{bucket}/o {
+
+    // Helper functions
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    function isValidImage() {
+      return request.resource.contentType.matches('image/.*')
+             && request.resource.size < 5 * 1024 * 1024; // 5MB max
+    }
+
+    // Motorcycle images
+    match /motorcycles/{motorcycleId}/{allPaths=**} {
+      // Anyone can read motorcycle images
+      allow read: if true;
+
+      // Authenticated users can upload images (ownership checked at app level)
+      allow write: if isAuthenticated() && isValidImage();
+    }
+
+    // User profile images
+    match /users/{userId}/{allPaths=**} {
+      // Anyone can read profile images
+      allow read: if true;
+
+      // Users can only upload their own profile images
+      allow write: if isOwner(userId) && isValidImage();
+    }
+
+    // Brand logos (admin only, checked at app level)
+    match /brands/{brandId}/{allPaths=**} {
+      allow read: if true;
+      allow write: if isAuthenticated() && isValidImage();
+    }
+  }
+}
